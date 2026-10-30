@@ -200,3 +200,65 @@ def test_parse_leak_sensors_falls_back_to_generated_name():
     dev["deviceName"] = None
     sensors = protocol.parse_leak_sensors({"devices": [dev]})
     assert sensors[0].name == "Govee Leak 44:55"
+
+
+# --- H5054 (RF sensor via H5040 gateway), polled over HTTP ------------------ #
+import json as _json
+
+
+def _h5054(device="AA:BB:CC:DD:EE:FF:3B:71", battery=100, last_time=1700000000000,
+           online=True, gwonline=True):
+    return {
+        "sku": "H5054",
+        "device": device,
+        "deviceName": "Utility Room",
+        "deviceExt": {
+            "deviceSettings": _json.dumps(
+                {"battery": battery, "gatewayInfo": {"device": "GW:01", "sku": "H5040"}}
+            ),
+            "lastDeviceData": _json.dumps(
+                {"online": online, "gwonline": gwonline, "lastTime": last_time}
+            ),
+        },
+    }
+
+
+def test_h5054_is_discovered_as_polled():
+    sensors = protocol.parse_leak_sensors({"devices": [_h5054()]})
+    assert len(sensors) == 1
+    s = sensors[0]
+    assert s.sku == "H5054" and s.polled
+    assert s.sno == -1 and s.battery == 100
+    assert s.gateway_sku == "H5040"
+
+
+def test_h5059_is_not_polled():
+    d = {"sku": "H5059", "device": "X", "deviceExt": {"deviceSettings": _json.dumps({"sno": 2})}}
+    (s,) = protocol.parse_leak_sensors({"devices": [d]})
+    assert not s.polled and s.sno == 2
+
+
+def test_polled_statuses():
+    st = protocol.polled_statuses({"devices": [_h5054(battery=80, gwonline=False)]})
+    s = st["AA:BB:CC:DD:EE:FF:3B:71"]
+    assert s.battery == 80 and s.online and not s.gateway_online
+    assert s.last_time == 1700000000000
+
+
+def test_polled_statuses_tolerates_missing_last_device_data():
+    d = _h5054()
+    del d["deviceExt"]["lastDeviceData"]
+    s = protocol.polled_statuses({"devices": [d]})["AA:BB:CC:DD:EE:FF:3B:71"]
+    assert s.last_time == 0 and s.online and s.gateway_online
+
+
+def test_leak_from_warn_messages():
+    f = protocol.leak_from_warn_messages
+    assert f([]) is False
+    assert f(None) is False
+    assert f([{"read": True, "message": "Leakage Alert"}]) is False
+    assert f([{"read": False, "message": "Leakage Alert: Utility Room"}]) is True
+    assert f([{"read": False, "message": "LeakageAlert"}]) is True
+    assert f([{"read": False, "message": "Low battery"}]) is False
+    # missing "read" is treated as read (conservative, matches homebridge)
+    assert f([{"message": "Leakage Alert"}]) is False

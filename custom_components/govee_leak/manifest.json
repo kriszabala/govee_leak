@@ -1,7 +1,9 @@
 {
   "domain": "govee_leak",
   "name": "GoveeLife Water Leak",
-  "codeowners": ["@aravindtri"],
+  "codeowners": [
+    "@aravindtri"
+  ],
   "config_flow": true,
   "documentation": "https://github.com/aravindtri/govee_leak",
   "iot_class": "cloud_push",
@@ -11,5 +13,5 @@
     "cryptography>=42.0.0",
     "requests>=2.31.0"
   ],
-  "version": "1.0.5"
+  "version": "1.1.0"
 }

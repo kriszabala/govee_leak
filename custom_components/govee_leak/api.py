@@ -32,6 +32,10 @@ LOGIN_URL = "https://app2.govee.com/account/rest/account/v2/login"
 VERIFICATION_URL = "https://app2.govee.com/account/rest/account/v1/verification"
 IOT_KEY_URL = "https://app2.govee.com/app/v1/account/iot/key"
 DEVICE_LIST_URL = "https://app2.govee.com/device/rest/devices/v1/list"
+# H5054 (RF sensor via H5040 gateway) leak alerts live in the account's
+# warning-message history, not on MQTT. warnLifted is the app's "Read" button.
+LEAK_WARN_URL = "https://app2.govee.com/leak/rest/device/v1/warnMessage"
+LEAK_WARN_LIFTED_URL = "https://app2.govee.com/leak/rest/device/v1/warnLifted"
 
 
 class GoveeAuthError(Exception):
@@ -142,8 +146,42 @@ class GoveeCloud:
         r = requests.post(
             DEVICE_LIST_URL, headers=_headers(self.email, token), json={}, timeout=30
         )
+        if r.status_code == 401:
+            raise GoveeAuthError("device list: token rejected (401)")
         r.raise_for_status()
         return r.json()
+
+    def warn_messages(self, token: str, device: str, sku: str) -> list:
+        """Return the leak warning-message history for a polled sensor."""
+        r = requests.post(
+            LEAK_WARN_URL,
+            headers=_headers(self.email, token),
+            json={"device": device.replace(":", ""), "limit": 50, "sku": sku},
+            timeout=30,
+        )
+        if r.status_code == 401:
+            raise GoveeAuthError("warnMessage: token rejected (401)")
+        r.raise_for_status()
+        data = r.json()
+        if data.get("status") == 401:
+            raise GoveeAuthError("warnMessage: token rejected (401)")
+        msgs = data.get("data")
+        return msgs if isinstance(msgs, list) else []
+
+    def warn_lifted(self, token: str, device: str, sku: str) -> None:
+        """Mark all of a polled sensor's leak alerts read (app "Read" button)."""
+        r = requests.post(
+            LEAK_WARN_LIFTED_URL,
+            headers=_headers(self.email, token),
+            json={"device": device.replace(":", ""), "sku": sku},
+            timeout=30,
+        )
+        if r.status_code == 401:
+            raise GoveeAuthError("warnLifted: token rejected (401)")
+        r.raise_for_status()
+        data = r.json()
+        if data.get("status") not in (200, None):
+            raise RuntimeError(f"warnLifted failed: {data.get('message', data)}")
 
     # -- combined --------------------------------------------------------- #
     def authenticate(self, code: str | None = None) -> GoveeCreds:

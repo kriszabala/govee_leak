@@ -41,6 +41,9 @@
     "button": {
       "refresh": {
         "name": "Refresh"
+      },
+      "clear_leak": {
+        "name": "Clear leak alert"
       }
     }
   }

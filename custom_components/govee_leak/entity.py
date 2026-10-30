@@ -6,7 +6,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity import Entity
 
-from .const import DOMAIN, LEAK_SKU, SIGNAL_AVAILABILITY, SIGNAL_UPDATE
+from .const import DOMAIN, SIGNAL_AVAILABILITY, SIGNAL_UPDATE
 from .runtime import GoveeLeakRuntime, SensorState
 
 
@@ -25,7 +25,7 @@ class GoveeLeakEntity(Entity):
             identifiers={(DOMAIN, device)},
             name=sensor.name,
             manufacturer="Govee",
-            model=LEAK_SKU,
+            model=sensor.sku,
             via_device=(DOMAIN, sensor.gateway_device) if sensor.gateway_device else None,
         )
 

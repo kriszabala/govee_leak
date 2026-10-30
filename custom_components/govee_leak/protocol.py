@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from dataclasses import dataclass
 
-from .const import GATEWAY_SKUS, LEAK_SKU
+from .const import GATEWAY_SKUS, LEAK_SKUS, POLLED_LEAK_SKUS
 
 DATA_FRAME_CMDS = {0x04, 0x34}
 
@@ -60,7 +61,7 @@ def readings_from_message(msg: dict) -> tuple[str, list[SensorReading]] | None:
 
 @dataclass
 class LeakSensor:
-    """A physical H5059 leak sensor discovered from the account device list."""
+    """A physical leak sensor discovered from the account device list."""
 
     device: str
     name: str
@@ -69,6 +70,12 @@ class LeakSensor:
     gateway_sku: str
     gateway_topic: str
     battery: int | None
+    sku: str = "H5059"
+
+    @property
+    def polled(self) -> bool:
+        """True for RF-only sensors (H5054) whose state is fetched over HTTP."""
+        return self.sku in POLLED_LEAK_SKUS
 
 
 def _expand(o):
@@ -76,12 +83,12 @@ def _expand(o):
 
 
 def parse_leak_sensors(device_list: dict) -> list[LeakSensor]:
-    """Extract H5059 leak sensors from the device-list response."""
+    """Extract leak sensors (H5059 / H5054) from the device-list response."""
     out: list[LeakSensor] = []
     for d in device_list.get("devices", []):
-        if d.get("sku") != LEAK_SKU:
+        if d.get("sku") not in LEAK_SKUS:
             continue
-        ds = _expand(d["deviceExt"]["deviceSettings"]) or {}
+        ds = _expand((d.get("deviceExt") or {}).get("deviceSettings")) or {}
         gi = ds.get("gatewayInfo") or {}
         sno = ds.get("sno")
         out.append(
@@ -93,6 +100,65 @@ def parse_leak_sensors(device_list: dict) -> list[LeakSensor]:
                 gateway_sku=gi.get("sku", ""),
                 gateway_topic=gi.get("topic", ""),
                 battery=ds.get("battery"),
+                sku=d.get("sku"),
             )
         )
     return out
+
+
+@dataclass
+class PolledStatus:
+    """online/battery/last-report info for a polled (H5054) sensor."""
+
+    online: bool
+    gateway_online: bool
+    battery: int | None
+    last_time: int
+
+
+def _to_int(v) -> int | None:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def polled_statuses(device_list: dict) -> dict[str, PolledStatus]:
+    """Map device id -> PolledStatus for every H5054 in the device list.
+
+    The gateway relays each H5054 report into ``lastDeviceData`` (``lastTime``
+    advances whenever the sensor transmits: leak, button press, or battery).
+    """
+    out: dict[str, PolledStatus] = {}
+    for d in device_list.get("devices", []):
+        if d.get("sku") not in POLLED_LEAK_SKUS:
+            continue
+        ext = _expand(d.get("deviceExt")) or {}
+        ds = _expand(ext.get("deviceSettings")) or {}
+        ld = _expand(ext.get("lastDeviceData")) or {}
+        out[d.get("device")] = PolledStatus(
+            online=bool(ld.get("online", True)),
+            gateway_online=bool(ld.get("gwonline", True)),
+            battery=_to_int(ds.get("battery")),
+            last_time=_to_int(ld.get("lastTime")) or 0,
+        )
+    return out
+
+
+def leak_from_warn_messages(messages) -> bool:
+    """True if a warnMessage history holds an unread ``LeakageAlert``.
+
+    Same rule homebridge-govee uses for H5054. The alert stays unread (so the
+    sensor reads wet) until it is acknowledged in the Govee app or via the
+    integration's "Clear leak alert" button.
+    """
+    if not isinstance(messages, list):
+        return False
+    return any(
+        isinstance(m, dict)
+        and not m.get("read", True)
+        and re.sub(r"\s+", "", str(m.get("message", "")).lower()).startswith(
+            "leakagealert"
+        )
+        for m in messages
+    )
